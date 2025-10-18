@@ -3,7 +3,7 @@ import random
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import datetime
-import sqlite3
+# Убрали ненужный импорт sqlite3
 from typing import Dict, Tuple
 
 # Настройка логирования
@@ -255,3 +255,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
