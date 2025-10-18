@@ -198,6 +198,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /question - Задать интересный вопрос
 /whattodo - Стоит ли это делать?
 
+"""
+
 async def question_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /question - задает случайный интересный вопрос"""
     question = random.choice(QUESTIONS)
@@ -261,6 +263,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
