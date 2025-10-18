@@ -1,9 +1,8 @@
 import logging
 import random
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackContext
 import datetime
-# Убрали ненужный импорт sqlite3
 from typing import Dict, Tuple
 
 # Настройка логирования
@@ -54,7 +53,7 @@ RESPONSES = {
     "Katran": ["Обращаться к Екатерине через личного секретаря", "екатерина вне зоны действия сети, отправьте свое сообщение в чате сбербанка", "катран - это акула кстати"],
     "enel": ["Че вам надо от Лены? ацтаньте от человека в токое время", "у аппарата Елена Алексеевна, говорите", "Для получения справочной информации от Enel зайдите в бар"],
     "TatyanaShumilova": ["Татьяна будет на связи через полчаса. А если нет, то перечитайте это сообщение.", "Ищу аналитиков, присылайте резюме", "она на даче..."],
-    "Ekaterina_K_": ["в рамке защищает честь фениксо, перезвоните позжеее", "Чуть что сразу Катя, что не спросишь - Катя", "Катя мчит, чтобы ответить на ваш запрос"]
+    "Ekaterina_K_": ["в рамке защищает честь фениксо, перезвоните позжеее", "Чуть что сразу Катя, что не спросишь - Катя", "Катя мчит, чтобы ответить на ваш запрос"],
     "Джек": ["Я тут!", "Вы про меня или про виски?", "Че надо?"],
     "джек": ["Я тут!", "Вы про меня или про виски?", "Че надо?"]
 }
@@ -158,6 +157,8 @@ YES_RESPONSES = [
 message_counters: Dict[int, int] = {}
 # Словарь для хранения порогов отправки комплиментов по чатам
 compliment_thresholds: Dict[int, int] = {}
+# Словарь для хранения состояний команды /leave
+leave_states: Dict[int, Dict] = {}
 
 
 def should_send_compliment(chat_id: int) -> bool:
@@ -199,8 +200,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /help - Показать это сообщение
 /question - Я задам тебе вопрос и хочу получить честный ответ.
 /whattodo - Задай вопрос и узнай мое мнение. (Я отвечу да или нет)
+/leave - Начать процедуру выхода из чата
 
 """
+    await update.message.reply_text(help_text)
+
 
 async def question_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /question - задает случайный интересный вопрос"""
@@ -214,11 +218,114 @@ async def whattodo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response)
 
 
+async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /leave - процедура выхода из чата"""
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    user_name = update.message.from_user.first_name
+    
+    # Инициализация состояния для пользователя
+    if chat_id not in leave_states:
+        leave_states[chat_id] = {}
+    
+    leave_states[chat_id][user_id] = {
+        "step": 1,
+        "user_name": user_name
+    }
+    
+    # Первый вопрос
+    await update.message.reply_text(f"{user_name}, ты точно хочешь нас покинуть?")
+
+
+async def handle_leave_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ответов на вопросы команды /leave"""
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    message_text = update.message.text.lower()
+    
+    # Проверяем, находится ли пользователь в процессе выхода
+    if (chat_id not in leave_states or 
+        user_id not in leave_states[chat_id]):
+        return
+    
+    state = leave_states[chat_id][user_id]
+    step = state["step"]
+    user_name = state["user_name"]
+    
+    # Проверяем ответы на каждом шаге
+    if step == 1:
+        if any(word in message_text for word in ["да", "yes", "точно", "хочу", "уверен"]):
+            state["step"] = 2
+            await update.message.reply_text("Это твое трезвое и взвешенное решение?")
+        else:
+            # Пользователь передумал на первом шаге
+            del leave_states[chat_id][user_id]
+            await update.message.reply_text(f"🎉 Ура! {user_name} остается с нами! Мы так рады!")
+    
+    elif step == 2:
+        if any(word in message_text for word in ["да", "yes", "трезвое", "взвешенное", "решение"]):
+            state["step"] = 3
+            await update.message.reply_text("Прости, ты уверен, что не передумаешь?")
+        else:
+            # Пользователь передумал на втором шаге
+            del leave_states[chat_id][user_id]
+            await update.message.reply_text(f"🎉 Отлично! {user_name} передумал(а) уходить! Мы счастливы!")
+    
+    elif step == 3:
+        if any(word in message_text for word in ["да", "yes", "уверен", "точно", "не передумаю"]):
+            # Пользователь подтвердил выход
+            del leave_states[chat_id][user_id]
+            await update.message.reply_text(f"😔 Очень жаль, что {user_name} покидает нас... Мы будем скучать!")
+            
+            # Пытаемся кикнуть пользователя (если у бота есть права)
+            try:
+                await context.bot.ban_chat_member(chat_id, user_id)
+                # Разбаниваем сразу, чтобы пользователь мог вернуться по ссылке
+                await context.bot.unban_chat_member(chat_id, user_id)
+            except Exception as e:
+                logging.warning(f"Не удалось кикнуть пользователя: {e}")
+                
+            # Создаем ссылку для приглашения
+            try:
+                invite_link = await context.bot.create_chat_invite_link(
+                    chat_id, 
+                    member_limit=1,
+                    creates_join_request=False
+                )
+                invite_url = invite_link.invite_link
+                
+                # Отправляем ссылку в чат
+                await update.message.reply_text(
+                    f"Если {user_name} передумает, вот ссылка для возвращения:\n{invite_url}"
+                )
+                
+                # Пытаемся отправить ссылку пользователю в личку
+                try:
+                    await context.bot.send_message(
+                        user_id,
+                        f"Если ты передумаешь, вот ссылка для возвращения в чат:\n{invite_url}\n\nМы будем ждать тебя! ❤️"
+                    )
+                except Exception as e:
+                    logging.warning(f"Не удалось отправить сообщение пользователю: {e}")
+                    
+            except Exception as e:
+                logging.warning(f"Не удалось создать ссылку приглашения: {e}")
+                
+        else:
+            # Пользователь передумал на третьем шаге
+            del leave_states[chat_id][user_id]
+            await update.message.reply_text(f"🎉 Фух! {user_name} остается! Мы так рады, что ты с нами!")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка входящих сообщений"""
     message_text = update.message.text.lower()
     chat_id = update.message.chat_id
     user_name = update.message.from_user.first_name
+
+    # Сначала проверяем, не является ли сообщение ответом на команду /leave
+    if await handle_leave_response(update, context):
+        return
 
     # 1. Случайный комплимент (раз в 100-150 сообщений)
     if should_send_compliment(chat_id):
@@ -238,6 +345,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
 
 
+async def handle_user_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка события, когда пользователь покидает чат"""
+    if update.message.left_chat_member:
+        user = update.message.left_chat_member
+        chat_id = update.message.chat_id
+        
+        # Создаем ссылку для приглашения
+        try:
+            invite_link = await context.bot.create_chat_invite_link(
+                chat_id, 
+                member_limit=1,
+                creates_join_request=False
+            )
+            invite_url = invite_link.invite_link
+            
+            # Отправляем сообщение в чат
+            await update.message.reply_text(
+                f"😕 Кто-то из мелких опять нажимает на кнопки в телегафоне...\n\n"
+                f"Если {user.first_name} хочет вернуться, отправьте ему эту ссылку:\n{invite_url}"
+            )
+            
+            # Пытаемся отправить ссылку ушедшему пользователю
+            try:
+                await context.bot.send_message(
+                    user.id,
+                    f"👋 Привет! Вижу, ты покинул(а) наш чат. Если это была случайность, "
+                    f"вот ссылка для возвращения:\n{invite_url}\n\nМы будем рады видеть тебя снова! ❤️"
+                )
+            except Exception as e:
+                logging.warning(f"Не удалось отправить сообщение ушедшему пользователю: {e}")
+                
+        except Exception as e:
+            logging.warning(f"Не удалось создать ссылку приглашения: {e}")
+            await update.message.reply_text(
+                f"😕 {user.first_name} покинул(а) чат. Кто-то опять нажимает на кнопки в телефоне..."
+            )
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ошибок"""
     logging.error(f"Ошибка: {context.error}")
@@ -252,9 +397,13 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("question", question_command))
     application.add_handler(CommandHandler("whattodo", whattodo_command))
+    application.add_handler(CommandHandler("leave", leave_command))
 
-    # Добавляем обработчик сообщений
+    # Добавляем обработчик сообщений (сначала проверяем на ответы для /leave)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Добавляем обработчик выхода пользователей из чата
+    application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_user_left))
 
     # Добавляем обработчик ошибок
     application.add_error_handler(error_handler)
@@ -265,8 +414,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
