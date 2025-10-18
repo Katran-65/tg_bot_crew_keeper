@@ -1,7 +1,7 @@
 import logging
 import random
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackContext
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import datetime
 from typing import Dict, Tuple
 
@@ -187,7 +187,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     await update.message.reply_text(
         "Привет! Я бот Джек. Создан специально чтобы развлекать экипаж Бухлохода."
-        "У меня будет много функций, но пока их чуть-чуть. "
+        "У меня будет много функций, но пока их чуть-чуть. \n"
         "Используй /help для списка команд."
     )
 
@@ -230,52 +230,82 @@ async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     leave_states[chat_id][user_id] = {
         "step": 1,
-        "user_name": user_name
+        "user_name": user_name,
+        "messages": []  # Для хранения ID сообщений с кнопками
     }
     
-    # Первый вопрос
-    await update.message.reply_text(f"{user_name}, ты точно хочешь нас покинуть?")
+    # Первый вопрос с кнопками
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, точно хочу", callback_data="leave_yes_1")],
+        [InlineKeyboardButton("❌ Нет, остаюсь", callback_data="leave_no_1")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message = await update.message.reply_text(
+        f"{user_name}, ты точно хочешь нас покинуть?",
+        reply_markup=reply_markup
+    )
+    
+    # Сохраняем ID сообщения
+    leave_states[chat_id][user_id]["messages"].append(message.message_id)
 
 
-async def handle_leave_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответов на вопросы команды /leave"""
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
-    message_text = update.message.text.lower()
+async def handle_leave_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка нажатий на кнопки команды /leave"""
+    query = update.callback_query
+    await query.answer()
+    
+    chat_id = query.message.chat_id
+    user_id = query.from_user.id
+    callback_data = query.data
     
     # Проверяем, находится ли пользователь в процессе выхода
     if (chat_id not in leave_states or 
         user_id not in leave_states[chat_id]):
+        await query.edit_message_text("Сессия истекла. Используйте /leave для начала процедуры выхода.")
         return
     
     state = leave_states[chat_id][user_id]
     step = state["step"]
     user_name = state["user_name"]
     
-    # Проверяем ответы на каждом шаге
-    if step == 1:
-        if any(word in message_text for word in ["да", "yes", "точно", "хочу", "уверен"]):
+    if callback_data == f"leave_no_{step}":
+        # Пользователь передумал
+        del leave_states[chat_id][user_id]
+        await query.edit_message_text(f"🎉 Ура! {user_name} остается с нами! Мы так рады!")
+        
+    elif callback_data == f"leave_yes_{step}":
+        # Пользователь подтвердил на текущем шаге
+        if step == 1:
+            # Второй вопрос
             state["step"] = 2
-            await update.message.reply_text("Это твое трезвое и взвешенное решение?")
-        else:
-            # Пользователь передумал на первом шаге
-            del leave_states[chat_id][user_id]
-            await update.message.reply_text(f"🎉 Ура! {user_name} остается с нами! Мы так рады!")
-    
-    elif step == 2:
-        if any(word in message_text for word in ["да", "yes", "трезвое", "взвешенное", "решение"]):
+            keyboard = [
+                [InlineKeyboardButton("✅ Да, трезвое решение", callback_data="leave_yes_2")],
+                [InlineKeyboardButton("❌ Нет, передумал(а)", callback_data="leave_no_2")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "Это твое трезвое и взвешенное решение?",
+                reply_markup=reply_markup
+            )
+            
+        elif step == 2:
+            # Третий вопрос
             state["step"] = 3
-            await update.message.reply_text("Прости, ты уверен, что не передумаешь?")
-        else:
-            # Пользователь передумал на втором шаге
-            del leave_states[chat_id][user_id]
-            await update.message.reply_text(f"🎉 Отлично! {user_name} передумал(а) уходить! Мы счастливы!")
-    
-    elif step == 3:
-        if any(word in message_text for word in ["да", "yes", "уверен", "точно", "не передумаю"]):
+            keyboard = [
+                [InlineKeyboardButton("✅ Да, не передумаю", callback_data="leave_yes_3")],
+                [InlineKeyboardButton("❌ Остаюсь с вами!", callback_data="leave_no_3")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "Прости, ты уверен, что не передумаешь?",
+                reply_markup=reply_markup
+            )
+            
+        elif step == 3:
             # Пользователь подтвердил выход
             del leave_states[chat_id][user_id]
-            await update.message.reply_text(f"😔 Очень жаль, что {user_name} покидает нас... Мы будем скучать!")
+            await query.edit_message_text(f"😔 Очень жаль, что {user_name} покидает нас... Мы будем скучать!")
             
             # Пытаемся кикнуть пользователя (если у бота есть права)
             try:
@@ -295,7 +325,8 @@ async def handle_leave_response(update: Update, context: ContextTypes.DEFAULT_TY
                 invite_url = invite_link.invite_link
                 
                 # Отправляем ссылку в чат
-                await update.message.reply_text(
+                await context.bot.send_message(
+                    chat_id,
                     f"Если {user_name} передумает, вот ссылка для возвращения:\n{invite_url}"
                 )
                 
@@ -310,11 +341,6 @@ async def handle_leave_response(update: Update, context: ContextTypes.DEFAULT_TY
                     
             except Exception as e:
                 logging.warning(f"Не удалось создать ссылку приглашения: {e}")
-                
-        else:
-            # Пользователь передумал на третьем шаге
-            del leave_states[chat_id][user_id]
-            await update.message.reply_text(f"🎉 Фух! {user_name} остается! Мы так рады, что ты с нами!")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,10 +348,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = update.message.text.lower()
     chat_id = update.message.chat_id
     user_name = update.message.from_user.first_name
-
-    # Сначала проверяем, не является ли сообщение ответом на команду /leave
-    if await handle_leave_response(update, context):
-        return
 
     # 1. Случайный комплимент (раз в 100-150 сообщений)
     if should_send_compliment(chat_id):
@@ -362,7 +384,7 @@ async def handle_user_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Отправляем сообщение в чат
             await update.message.reply_text(
-                f"😕 Кто-то из мелких опять нажимает на кнопки в телегафоне...\n\n"
+                f"😕 Кто-то из мелких опять нажимает на кнопки в телефоне...\n\n"
                 f"Если {user.first_name} хочет вернуться, отправьте ему эту ссылку:\n{invite_url}"
             )
             
@@ -379,7 +401,7 @@ async def handle_user_left(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.warning(f"Не удалось создать ссылку приглашения: {e}")
             await update.message.reply_text(
-                f"😕 {user.first_name} покинул(а) чат. Кто-то опять нажимает на кнопки в телефоне..."
+                f"😕 {user.first_name} покинул(а) чат. Кто-то из мелких опять нажимает на кнопки в телефоне..."
             )
 
 
@@ -399,7 +421,10 @@ def main():
     application.add_handler(CommandHandler("whattodo", whattodo_command))
     application.add_handler(CommandHandler("leave", leave_command))
 
-    # Добавляем обработчик сообщений (сначала проверяем на ответы для /leave)
+    # Добавляем обработчик callback-запросов (нажатия на кнопки)
+    application.add_handler(CallbackQueryHandler(handle_leave_callback, pattern="^leave_"))
+
+    # Добавляем обработчик сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Добавляем обработчик выхода пользователей из чата
@@ -414,4 +439,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
