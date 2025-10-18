@@ -186,12 +186,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /question - Задать интересный вопрос
 /whattodo - Стоит ли это делать?
 
-💬 **Я реагирую на слова:**"""
-
-    triggers = ", ".join(RESPONSES.keys())
-    await update.message.reply_text(help_text + "\n" + triggers)
-
-
 async def question_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /question - задает случайный интересный вопрос"""
     question = random.choice(QUESTIONS)
@@ -255,4 +249,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
