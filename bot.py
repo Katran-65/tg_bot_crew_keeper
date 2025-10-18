@@ -187,7 +187,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     await update.message.reply_text(
         "Привет! Я бот Джек. Создан специально чтобы развлекать экипаж Бухлохода."
-        "У меня будет много функций, но пока их чуть-чуть"
+        "У меня будет много функций, но пока их чуть-чуть. "
         "Используй /help для списка команд."
     )
 
@@ -414,3 +414,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
